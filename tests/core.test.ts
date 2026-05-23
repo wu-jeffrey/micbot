@@ -16,12 +16,14 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "micbot-test-"));
   process.env.MICBOT_DB_PATH = path.join(tempDir, "micbot.db");
+  process.env.MICBOT_DATA_DIR = path.join(tempDir, "data");
   process.env.MICBOT_WIKI_DIR = path.join(tempDir, "data", "wiki");
 });
 
 afterEach(() => {
   closeDb();
   delete process.env.MICBOT_DB_PATH;
+  delete process.env.MICBOT_DATA_DIR;
   delete process.env.MICBOT_WIKI_DIR;
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -33,6 +35,7 @@ describe("MICBot raw ledger and wiki projection", () => {
       env: {
         ...process.env,
         MICBOT_DB_PATH: process.env.MICBOT_DB_PATH!,
+        MICBOT_DATA_DIR: process.env.MICBOT_DATA_DIR!,
         MICBOT_WIKI_DIR: process.env.MICBOT_WIKI_DIR!
       },
       encoding: "utf8"
@@ -431,5 +434,209 @@ describe("MICBot raw ledger and wiki projection", () => {
     initDb();
     setSetting("business_name", "\"Made In Canada Industries\"");
     expect(getSetting("business_name")?.value_json).toBe("\"Made In Canada Industries\"");
+  });
+});
+
+describe("MICBot intake to print package workflow", () => {
+  function runCli(args: string[]): string {
+    return execFileSync("npm", ["run", "cli", "--", ...args], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        MICBOT_DB_PATH: process.env.MICBOT_DB_PATH!,
+        MICBOT_DATA_DIR: process.env.MICBOT_DATA_DIR!,
+        MICBOT_WIKI_DIR: process.env.MICBOT_WIKI_DIR!
+      },
+      encoding: "utf8"
+    });
+  }
+
+  it("creates, lists, and reads an intake request", () => {
+    const created = JSON.parse(
+      runCli([
+        "create-intake",
+        "--source",
+        "manual",
+        "--surface",
+        "openclaw_discord",
+        "--channel",
+        "intake",
+        "--customer-name",
+        "Test Customer",
+        "--customer-email",
+        "test@example.com",
+        "--offer-slug",
+        "custom-print",
+        "--message",
+        "Print this in black PETG, quantity 4.",
+        "--json"
+      ])
+    ) as { id: number; status: string; message: string };
+
+    expect(created.id).toBe(1);
+    expect(created.status).toBe("received");
+
+    const listed = JSON.parse(runCli(["list-intakes", "--json"])) as Array<{ id: number }>;
+    expect(listed).toHaveLength(1);
+    expect(listed[0].id).toBe(created.id);
+
+    const shown = JSON.parse(runCli(["show-intake", "--id", String(created.id), "--json"])) as { message: string };
+    expect(shown.message).toBe("Print this in black PETG, quantity 4.");
+  });
+
+  it("stores and hashes an artifact under ignored runtime storage", () => {
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
+    ) as { id: number };
+
+    const artifact = JSON.parse(
+      runCli([
+        "store-artifact",
+        "--intake-request-id",
+        String(intake.id),
+        "--path",
+        "tests/fixtures/test_part.stl",
+        "--artifact-type",
+        "stl",
+        "--json"
+      ])
+    ) as { id: number; stored_path: string; sha256: string; size_bytes: number; artifact_type: string };
+
+    expect(artifact.id).toBe(1);
+    expect(artifact.artifact_type).toBe("stl");
+    expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(artifact.size_bytes).toBeGreaterThan(0);
+    expect(artifact.stored_path).toContain(path.join("data", "artifacts"));
+    expect(fs.existsSync(artifact.stored_path)).toBe(true);
+
+    const stored = fs.readFileSync(artifact.stored_path, "utf8");
+    expect(stored).toContain("solid test_part");
+  });
+
+  it("marks an STL file review as valid_enough", () => {
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
+    ) as { id: number };
+    const artifact = JSON.parse(
+      runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
+    ) as { id: number; sha256: string };
+
+    const review = JSON.parse(runCli(["review-file", "--artifact-id", String(artifact.id), "--json"])) as {
+      status: string;
+      detected_type: string;
+      sha256: string;
+    };
+
+    expect(review.status).toBe("valid_enough");
+    expect(review.detected_type).toBe("stl");
+    expect(review.sha256).toBe(artifact.sha256);
+
+    const shown = JSON.parse(runCli(["show-file-review", "--artifact-id", String(artifact.id), "--json"])) as { status: string };
+    expect(shown.status).toBe("valid_enough");
+  });
+
+  it("creates a print package with checklist, notes, and metadata, then updates status", () => {
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
+    ) as { id: number };
+    const artifact = JSON.parse(
+      runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
+    ) as { id: number };
+
+    const printPackage = JSON.parse(
+      runCli([
+        "create-print-package",
+        "--intake-request-id",
+        String(intake.id),
+        "--artifact-id",
+        String(artifact.id),
+        "--material-profile",
+        "PETG",
+        "--printer-profile",
+        "default-bambu",
+        "--quantity",
+        "4",
+        "--json"
+      ])
+    ) as { id: number; status: string; package_dir: string; prepared_file_path: string; preview_path: string };
+
+    expect(printPackage.status).toBe("ready_for_preview");
+    expect(fs.existsSync(path.join(printPackage.package_dir, "original"))).toBe(true);
+    expect(fs.existsSync(path.join(printPackage.package_dir, "working"))).toBe(true);
+    expect(fs.existsSync(path.join(printPackage.package_dir, "bambu"))).toBe(true);
+    expect(fs.existsSync(printPackage.preview_path)).toBe(true);
+    expect(fs.existsSync(printPackage.prepared_file_path)).toBe(true);
+    expect(fs.readFileSync(path.join(printPackage.package_dir, "checklist.md"), "utf8")).toContain("print send requires explicit human approval");
+    expect(fs.readFileSync(path.join(printPackage.package_dir, "notes.md"), "utf8")).toBe("\n");
+    expect(JSON.parse(fs.readFileSync(path.join(printPackage.package_dir, "package.json"), "utf8"))).toMatchObject({
+      no_autonomous_printing: true,
+      quantity: 4
+    });
+
+    const updated = JSON.parse(
+      runCli(["mark-print-package-status", "--id", String(printPackage.id), "--status", "awaiting_human_approval", "--json"])
+    ) as { status: string };
+    expect(updated.status).toBe("awaiting_human_approval");
+
+    const shown = JSON.parse(runCli(["show-print-package", "--id", String(printPackage.id), "--json"])) as {
+      print_package: { status: string };
+    };
+    expect(shown.print_package.status).toBe("awaiting_human_approval");
+  });
+
+  it("probes Bambu tooling as JSON without requiring Bambu to exist", () => {
+    const probe = JSON.parse(runCli(["probe-bambu", "--json"])) as {
+      ok: boolean;
+      bambu_studio: { found: boolean; paths: string[] };
+      bambu_connect: { found: boolean; paths: string[] };
+      safety: { sends_to_printer: boolean; requires_login: boolean };
+    };
+
+    expect(probe.ok).toBe(true);
+    expect(Array.isArray(probe.bambu_studio.paths)).toBe(true);
+    expect(Array.isArray(probe.bambu_connect.paths)).toBe(true);
+    expect(probe.safety.sends_to_printer).toBe(false);
+    expect(probe.safety.requires_login).toBe(false);
+  });
+
+  it("open preview fails gracefully when Bambu Studio is missing and never sends to a printer", () => {
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
+    ) as { id: number };
+    const artifact = JSON.parse(
+      runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
+    ) as { id: number };
+    const printPackage = JSON.parse(
+      runCli([
+        "create-print-package",
+        "--intake-request-id",
+        String(intake.id),
+        "--artifact-id",
+        String(artifact.id),
+        "--material-profile",
+        "PETG",
+        "--printer-profile",
+        "default-bambu",
+        "--quantity",
+        "4",
+        "--json"
+      ])
+    ) as { id: number };
+
+    const opened = JSON.parse(runCli(["open-print-package-preview", "--print-package-id", String(printPackage.id), "--json"])) as {
+      ok: boolean;
+      opened: boolean;
+      handoff?: { type: string; status: string };
+      probe: { bambu_studio: { found: boolean }; safety: { sends_to_printer: boolean } };
+      next_manual_step?: string;
+    };
+
+    expect(opened.probe.safety.sends_to_printer).toBe(false);
+    if (!opened.probe.bambu_studio.found) {
+      expect(opened.ok).toBe(false);
+      expect(opened.opened).toBe(false);
+      expect(opened.handoff).toMatchObject({ type: "approve_print_send", status: "open" });
+      expect(opened.next_manual_step).toContain("Do not send to printer without approval");
+    }
   });
 });

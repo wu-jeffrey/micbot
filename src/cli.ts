@@ -13,6 +13,24 @@ import {
 import { addRawMessage, listRawMessages, showRawMessage } from "./rawMessages.js";
 import { getSetting, listSettings, setSetting } from "./settings.js";
 import { rebuildWiki } from "./wiki.js";
+import {
+  createIntake,
+  createPrintPackage,
+  latestHumanHandoffForPrintPackage,
+  listArtifacts,
+  listIntakes,
+  markPrintPackageStatus,
+  openPrintPackagePreview,
+  probeBambu,
+  reviewFile,
+  showArtifact,
+  showFileReview,
+  showIntake,
+  showLatestFileReviewForArtifact,
+  showPrintPackage,
+  storeArtifact,
+  updateIntakeStatus
+} from "./intakeWorkflow.js";
 
 const program = new Command();
 
@@ -265,6 +283,190 @@ program.command("list-settings").description("List settings").option("--json", "
   const rows = listSettings();
   writeOutput(rows, options.json, rows.map((row) => `${row.key}: ${row.value_json}`).join("\n"));
 });
+
+program
+  .command("create-intake")
+  .description("Create a local intake request from a human-visible source")
+  .requiredOption("--source <source>")
+  .requiredOption("--surface <surface>")
+  .requiredOption("--channel <channel>")
+  .option("--customer-name <name>")
+  .option("--customer-email <email>")
+  .option("--customer-phone <phone>")
+  .option("--offer-slug <slug>")
+  .requiredOption("--message <message>")
+  .option("--raw-message-id <id>")
+  .option("--metadata-json <json>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = createIntake({
+      source: options.source,
+      surface: options.surface,
+      channel: options.channel,
+      customerName: options.customerName,
+      customerEmail: options.customerEmail,
+      customerPhone: options.customerPhone,
+      offerSlug: options.offerSlug,
+      message: options.message,
+      rawMessageId: options.rawMessageId ? parseRequiredId(options.rawMessageId, "raw-message-id") : undefined,
+      metadataJson: options.metadataJson
+    });
+    writeOutput(row, options.json, `Created intake request ${row.id}.`);
+  });
+
+program.command("list-intakes").description("List intake requests").option("--json", "Output valid JSON only").action((options) => {
+  initDb();
+  const rows = listIntakes();
+  writeOutput(rows, options.json, rows.map((row) => `${row.id}: [${row.status}] ${row.customer_name ?? "unknown"}: ${row.message}`).join("\n"));
+});
+
+program.command("show-intake").requiredOption("--id <id>").option("--json", "Output valid JSON only").action((options) => {
+  initDb();
+  const row = showIntake(parseRequiredId(options.id));
+  if (!row) {
+    throw new Error(`Intake request not found: ${options.id}`);
+  }
+  writeOutput(row, options.json, `${row.id}: [${row.status}] ${row.message}`);
+});
+
+program
+  .command("update-intake-status")
+  .requiredOption("--id <id>")
+  .requiredOption("--status <status>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = updateIntakeStatus(parseRequiredId(options.id), options.status);
+    writeOutput(row, options.json, `Updated intake request ${row.id} to ${row.status}.`);
+  });
+
+program
+  .command("store-artifact")
+  .description("Copy an uploaded/customer file into managed artifact storage")
+  .requiredOption("--intake-request-id <id>")
+  .requiredOption("--path <path>")
+  .option("--artifact-type <type>")
+  .option("--raw-message-id <id>")
+  .option("--metadata-json <json>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = storeArtifact({
+      intakeRequestId: parseRequiredId(options.intakeRequestId, "intake-request-id"),
+      filePath: options.path,
+      artifactType: options.artifactType,
+      rawMessageId: options.rawMessageId ? parseRequiredId(options.rawMessageId, "raw-message-id") : undefined,
+      metadataJson: options.metadataJson
+    });
+    writeOutput(row, options.json, `Stored artifact ${row.id} at ${row.stored_path}.`);
+  });
+
+program
+  .command("list-artifacts")
+  .option("--intake-request-id <id>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const rows = listArtifacts(options.intakeRequestId ? parseRequiredId(options.intakeRequestId, "intake-request-id") : undefined);
+    writeOutput(rows, options.json, rows.map((row) => `${row.id}: [${row.artifact_type}] ${row.filename}`).join("\n"));
+  });
+
+program.command("show-artifact").requiredOption("--id <id>").option("--json", "Output valid JSON only").action((options) => {
+  initDb();
+  const row = showArtifact(parseRequiredId(options.id));
+  if (!row) {
+    throw new Error(`Artifact not found: ${options.id}`);
+  }
+  writeOutput(row, options.json, `${row.id}: [${row.artifact_type}] ${row.stored_path}`);
+});
+
+program.command("review-file").requiredOption("--artifact-id <id>").option("--json", "Output valid JSON only").action((options) => {
+  initDb();
+  const row = reviewFile(parseRequiredId(options.artifactId, "artifact-id"));
+  writeOutput(row, options.json, `Reviewed artifact ${row.artifact_id}: ${row.status}.`);
+});
+
+program
+  .command("show-file-review")
+  .option("--id <id>")
+  .option("--artifact-id <id>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = options.id
+      ? showFileReview(parseRequiredId(options.id))
+      : options.artifactId
+        ? showLatestFileReviewForArtifact(parseRequiredId(options.artifactId, "artifact-id"))
+        : undefined;
+    if (!row) {
+      throw new Error("File review not found. Provide --id or --artifact-id.");
+    }
+    writeOutput(row, options.json, `${row.id}: artifact ${row.artifact_id} ${row.status}.`);
+  });
+
+program
+  .command("create-print-package")
+  .description("Create a human-reviewable local print package")
+  .requiredOption("--intake-request-id <id>")
+  .requiredOption("--artifact-id <id>")
+  .requiredOption("--material-profile <profile>")
+  .requiredOption("--printer-profile <profile>")
+  .requiredOption("--quantity <quantity>")
+  .option("--notes <notes>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = createPrintPackage({
+      intakeRequestId: parseRequiredId(options.intakeRequestId, "intake-request-id"),
+      artifactId: parseRequiredId(options.artifactId, "artifact-id"),
+      materialProfile: options.materialProfile,
+      printerProfile: options.printerProfile,
+      quantity: parseRequiredId(options.quantity, "quantity"),
+      notes: options.notes
+    });
+    writeOutput(row, options.json, `Created print package ${row.id} at ${row.package_dir}.`);
+  });
+
+program.command("show-print-package").requiredOption("--id <id>").option("--json", "Output valid JSON only").action((options) => {
+  initDb();
+  const printPackage = showPrintPackage(parseRequiredId(options.id));
+  if (!printPackage) {
+    throw new Error(`Print package not found: ${options.id}`);
+  }
+  const handoff = latestHumanHandoffForPrintPackage(printPackage.id);
+  writeOutput({ print_package: printPackage, latest_handoff: handoff ?? null }, options.json, `${printPackage.id}: ${printPackage.status} ${printPackage.package_dir}`);
+});
+
+program
+  .command("mark-print-package-status")
+  .requiredOption("--id <id>")
+  .requiredOption("--status <status>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = markPrintPackageStatus(parseRequiredId(options.id), options.status);
+    writeOutput(row, options.json, `Updated print package ${row.id} to ${row.status}.`);
+  });
+
+program.command("probe-bambu").description("Detect local Bambu preview capabilities without login or printer send").option("--json", "Output valid JSON only").action((options) => {
+  const result = probeBambu();
+  writeOutput(result, options.json, result.bambu_studio.found ? "Bambu Studio detected." : "Bambu Studio not detected.");
+});
+
+program
+  .command("open-print-package-preview")
+  .description("Open a package in Bambu Studio if available and create a human approval handoff")
+  .requiredOption("--print-package-id <id>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const result = openPrintPackagePreview(parseRequiredId(options.printPackageId, "print-package-id"));
+    const human = result.opened
+      ? `Opened print package ${result.print_package.id} for preview.`
+      : `Preview was not opened. ${result.next_manual_step ?? ""}`.trim();
+    writeOutput(result, options.json, human);
+  });
 
 program.parseAsync().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);

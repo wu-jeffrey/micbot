@@ -14,15 +14,21 @@ Do not replace OpenClaw memory with MICBot memory.
 
 ## Current Scope
 
-The current scope is Chunk 1C: hardened OpenClaw-to-MICBot capture protocol over the local CLI.
+The current scope is the fastest path to business impact: intake -> artifact -> print package -> Bambu preview -> human approval.
 
-The primitive is:
+The memory primitive is:
 
 raw message/event -> SQLite ledger -> distilled business memory -> Markdown wiki projection
 
 Raw messages are durable source material. Memory entries are distilled understanding. Markdown wiki files are generated projections from SQLite and are not the source of truth.
 
 SQLite remains the source of truth. The canonical generated MICBot wiki path is `data/wiki/`.
+
+The print workflow primitive is:
+
+intake request -> managed artifact storage -> basic file review -> local print package -> human-visible Bambu preview -> explicit approval handoff
+
+Do not send anything to a printer autonomously. Do not build black-box printer control. Prefer human-visible Bambu Studio/Bambu Connect preview and explicit approve/reject/revise states before any future printer send.
 
 ## OpenClaw Capture Rules
 
@@ -47,7 +53,7 @@ SQLite remains the source of truth. The canonical generated MICBot wiki path is 
 19. Wiki entries are distilled understanding.
 20. SQLite remains the source of truth.
 21. `data/wiki/` is the canonical generated wiki path.
-22. Do not build jobs/approvals/tasks yet.
+22. Human approval handoffs now exist for print package review; keep them explicit and auditable.
 
 ## Surface Model
 
@@ -57,6 +63,6 @@ Use `channel` for the specific channel, session, or context, such as `general`, 
 
 ## Do Not Build Yet
 
-Do not build jobs, approvals, task systems, browser automation, printer automation, Discord bot integration, Slack bot integration, Web UI listeners, marketplace automation, website automation, STL inspection, MCP servers, multi-agent runtimes, embeddings, vector search, RAG, or automatic memory summarization.
+Do not build browser automation, autonomous printer automation, Discord bot integration, Slack bot integration, Web UI listeners, marketplace automation, website automation, slicer-level STL inspection, mesh repair, MCP servers, multi-agent runtimes, embeddings, vector search, RAG, or automatic memory summarization.
 
 Prefer small, testable, durable changes. Do not overbuild.

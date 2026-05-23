@@ -17,6 +17,18 @@ export function wikiDir(): string {
   return process.env.MICBOT_WIKI_DIR ?? path.join(projectRoot(), "data", "wiki");
 }
 
+export function dataDir(): string {
+  return process.env.MICBOT_DATA_DIR ?? path.join(projectRoot(), "data");
+}
+
+export function artifactsDir(): string {
+  return path.join(dataDir(), "artifacts");
+}
+
+export function printPackagesDir(): string {
+  return path.join(dataDir(), "print_packages");
+}
+
 export function getDb(): Database.Database {
   if (!db) {
     const filename = dbPath();
