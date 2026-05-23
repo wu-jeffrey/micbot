@@ -528,12 +528,81 @@ function maybeAppPath(appName: string): string | null {
   return locations.find((candidate) => candidate && fs.existsSync(candidate)) ?? null;
 }
 
+export interface BambuConfiguredPrinter {
+  serial: string;
+  selected: boolean;
+  has_access_code: boolean;
+  model: string | null;
+}
+
+function maybeBambuStudioConfigPath(): string | null {
+  const home = process.env.HOME;
+  if (!home) return null;
+  const candidate = path.join(home, "Library", "Application Support", "BambuStudio", "BambuStudio.conf");
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function readConfiguredBambuPrinters(): {
+  found: boolean;
+  config_path: string | null;
+  selected_serial: string | null;
+  current_machine_profile: string | null;
+  current_filament_profiles: string[];
+  configured_printers: BambuConfiguredPrinter[];
+} {
+  const configPath = maybeBambuStudioConfigPath();
+  if (!configPath) {
+    return {
+      found: false,
+      config_path: null,
+      selected_serial: null,
+      current_machine_profile: null,
+      current_filament_profiles: [],
+      configured_printers: []
+    };
+  }
+
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+    access_code?: Record<string, unknown>;
+    app?: { user_last_selected_machine?: unknown };
+    models?: Array<{ model?: unknown }>;
+    presets?: { machine?: unknown; filaments?: unknown };
+    user_access_code?: Record<string, unknown>;
+  };
+
+  const selectedSerial = typeof config.app?.user_last_selected_machine === "string" ? config.app.user_last_selected_machine : null;
+  const accessCodeSerials = Object.keys(config.access_code ?? {});
+  const userAccessCodeSerials = Object.keys(config.user_access_code ?? {});
+  const serials = Array.from(new Set([...accessCodeSerials, ...userAccessCodeSerials])).sort();
+  const configuredModel =
+    Array.isArray(config.models) && typeof config.models[0]?.model === "string" ? (config.models[0].model as string) : null;
+  const currentMachineProfile = typeof config.presets?.machine === "string" ? config.presets.machine : null;
+  const currentFilamentProfiles = Array.isArray(config.presets?.filaments)
+    ? config.presets.filaments.filter((filament): filament is string => typeof filament === "string")
+    : [];
+
+  return {
+    found: true,
+    config_path: configPath,
+    selected_serial: selectedSerial,
+    current_machine_profile: currentMachineProfile,
+    current_filament_profiles: currentFilamentProfiles,
+    configured_printers: serials.map((serial) => ({
+      serial,
+      selected: serial === selectedSerial,
+      has_access_code: userAccessCodeSerials.includes(serial) || accessCodeSerials.includes(serial),
+      model: configuredModel
+    }))
+  };
+}
+
 export function probeBambu(): {
   ok: true;
   platform: string;
   bambu_studio: { found: boolean; paths: string[] };
   bambu_connect: { found: boolean; paths: string[] };
   cli_candidates: { found: boolean; paths: string[] };
+  studio_config: ReturnType<typeof readConfiguredBambuPrinters>;
   capabilities: string[];
   safety: { sends_to_printer: false; requires_login: false };
 } {
@@ -551,6 +620,7 @@ export function probeBambu(): {
     bambu_studio: { found: studioPaths.length > 0, paths: studioPaths },
     bambu_connect: { found: connectPaths.length > 0, paths: connectPaths },
     cli_candidates: { found: cliCandidates.length > 0, paths: cliCandidates },
+    studio_config: readConfiguredBambuPrinters(),
     capabilities: studioPaths.length > 0 ? ["human_visible_preview"] : [],
     safety: { sends_to_printer: false, requires_login: false }
   };

@@ -589,12 +589,14 @@ describe("MICBot intake to print package workflow", () => {
       ok: boolean;
       bambu_studio: { found: boolean; paths: string[] };
       bambu_connect: { found: boolean; paths: string[] };
+      studio_config: { configured_printers: unknown[] };
       safety: { sends_to_printer: boolean; requires_login: boolean };
     };
 
     expect(probe.ok).toBe(true);
     expect(Array.isArray(probe.bambu_studio.paths)).toBe(true);
     expect(Array.isArray(probe.bambu_connect.paths)).toBe(true);
+    expect(Array.isArray(probe.studio_config.configured_printers)).toBe(true);
     expect(probe.safety.sends_to_printer).toBe(false);
     expect(probe.safety.requires_login).toBe(false);
   });
