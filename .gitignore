@@ -1,0 +1,21 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+.DS_Store
+
+# Runtime SQLite data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Customer / operational file storage
+data/artifacts/
+data/print_packages/
+data/uploads/
+data/logs/
+
+# Local caches
+.cache/
+tmp/
