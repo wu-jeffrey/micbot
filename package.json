@@ -7,11 +7,14 @@
     "build": "tsc --noEmit",
     "init-db": "tsx src/cli.ts init-db",
     "cli": "tsx src/cli.ts",
+    "smoke:print-package": "tsx src/cli.ts smoke-print-package",
     "test": "vitest run"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "puppeteer-core": "^25.1.0",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

@@ -8,7 +8,7 @@ The current durable memory primitive is:
 
 OpenClaw message -> CLI command -> SQLite write -> SQLite read -> Markdown wiki projection -> tests
 
-It intentionally does not build Discord bot integration, Slack bot integration, Web UI listeners, jobs, approvals, printer automation, browser automation, marketplace automation, website automation, STL inspection, embeddings, vector search, RAG, or automatic summarization.
+It intentionally does not build a standalone Discord bot, Slack bot integration, Web UI listeners, jobs, approvals, printer automation, browser automation, marketplace automation, website automation, STL inspection, embeddings, vector search, RAG, or automatic summarization.
 
 ## Memory Layers
 
@@ -44,7 +44,7 @@ Use `add-raw-message` for business-relevant raw capture. Use `remember` only for
 
 The recommended surface values are `openclaw_discord`, `openclaw_slack`, `openclaw_web`, `manual`, and `system`. The `channel` field stores the specific channel, session, or context such as `general`, `micbot`, or `webui`.
 
-Do not build Discord, Slack, Web UI, or other channel-specific integrations yet. OpenClaw remains the operator; MICBot remains the local tool layer.
+OpenClaw remains the operator; MICBot remains the local tool layer. Discord attachment intake is exposed as a CLI command that OpenClaw can call after it has access to the attachment file.
 
 ## Setup
 
@@ -73,11 +73,56 @@ npm run cli -- list-settings
 
 Use `--json` when OpenClaw needs machine-readable output. Commands with JSON support emit valid JSON only when `--json` is passed. The `remember` command writes the raw message and linked memory entry in a SQLite transaction, then rebuilds the wiki projection. If wiki rebuild fails after the DB write, it exits non-zero and reports that the DB write succeeded while projection failed.
 
+## Discord Attachment Intake
+
+OpenClaw can hand MICBot a printable Discord attachment after downloading or otherwise resolving it to a local file path:
+
+```bash
+npm run cli -- intake-discord-attachment \
+ --channel general \
+ --author mynamejeef \
+ --message-id "123" \
+ --attachment-id "456" \
+ --attachment-path "tests/fixtures/test_part.stl" \
+ --attachment-filename "customer-part.stl" \
+ --message-content "Can you print this?" \
+ --json
+```
+
+This accepts `.stl`, `.3mf`, `.step`, and `.stp` only. It creates a raw message, an intake request, and a stored artifact with Discord metadata, then stops at `next_step: "review_file"`.
+
+## Remote Print Inspection
+
+MICBot can prepare a Discord-friendly inspection card for a print package without sending anything to a printer:
+
+```bash
+npm run cli -- create-remote-inspection --print-package-id 1 --json
+```
+
+For STL packages this generates only Bambu Studio style raster PNG screenshots. MICBot attempts the Bambu Studio Auto Arrange shortcut before creating the preview and records that attempt in `remote_inspection.auto_arrange`. It still never sends anything to a printer.
+
+If Bambu Studio is open, MICBot can also create an Auto Arrange handoff and optionally try Bambu Studio's keyboard shortcut:
+
+```bash
+npm run cli -- request-bambu-auto-arrange --print-package-id 1 --attempt-ui --json
+```
+
+This is still human-gated. The command records that Auto Arrange was requested; it does not approve or send a print.
+
 ## Tests
 
 ```bash
 npm test
 ```
+
+## Print Package Smoke Test
+
+```bash
+npm run smoke:print-package -- --json
+```
+
+This runs the local intake -> artifact -> review -> print package path with `tests/fixtures/test_part.stl` and verifies the generated handoff files. Add `-- --open-preview --json` only when you want it to attempt opening Bambu Studio.
+By default it also creates the same remote inspection assets as `create-remote-inspection` and returns their paths in `remote_inspection.preview_files` plus any PNG paths in `remote_inspection.raster_preview_files`. Add `-- --skip-remote-inspection --json` when you only want the package smoke path.
 
 ## Next Chunk
 

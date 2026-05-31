@@ -513,6 +513,154 @@ describe("MICBot intake to print package workflow", () => {
     expect(stored).toContain("solid test_part");
   });
 
+  it("creates a Discord attachment intake for a supported printable model", () => {
+    const result = JSON.parse(
+      runCli([
+        "intake-discord-attachment",
+        "--channel",
+        "general",
+        "--author",
+        "mynamejeef",
+        "--author-id",
+        "discord-user-1",
+        "--message-id",
+        "discord-message-1",
+        "--attachment-id",
+        "discord-attachment-1",
+        "--attachment-path",
+        "tests/fixtures/test_part.stl",
+        "--attachment-filename",
+        "customer-bracket.stl",
+        "--message-content",
+        "Can you print this?",
+        "--json"
+      ])
+    ) as {
+      ok: boolean;
+      raw_message: { id: number; surface: string; actor: string; raw_json: string };
+      intake: { id: number; source: string; status: string; raw_message_id: number; metadata_json: string };
+      artifact: { id: number; artifact_type: string; filename: string; raw_message_id: number; metadata_json: string };
+      next_step: string;
+    };
+
+    expect(result.ok).toBe(true);
+    expect(result.raw_message.surface).toBe("openclaw_discord");
+    expect(result.raw_message.actor).toBe("mynamejeef");
+    expect(result.intake.source).toBe("discord_attachment");
+    expect(result.intake.status).toBe("file_stored");
+    expect(result.intake.raw_message_id).toBe(result.raw_message.id);
+    expect(result.artifact.raw_message_id).toBe(result.raw_message.id);
+    expect(result.artifact.artifact_type).toBe("stl");
+    expect(result.artifact.filename).toBe("customer-bracket.stl");
+    expect(result.next_step).toBe("review_file");
+
+    const metadata = JSON.parse(result.artifact.metadata_json) as { discord: { message_id: string; attachment_filename: string; size_bytes: number } };
+    expect(metadata.discord.message_id).toBe("discord-message-1");
+    expect(metadata.discord.attachment_filename).toBe("customer-bracket.stl");
+    expect(metadata.discord.size_bytes).toBeGreaterThan(0);
+  });
+
+  it("scopes Discord uploads to a reusable job thread for revisions and plate members", () => {
+    const first = JSON.parse(
+      runCli([
+        "intake-discord-attachment",
+        "--channel",
+        "general",
+        "--author",
+        "mynamejeef",
+        "--message-id",
+        "discord-message-job-1",
+        "--attachment-path",
+        "tests/fixtures/test_part.stl",
+        "--attachment-filename",
+        "bracket-v1.stl",
+        "--message-content",
+        "Can you print this bracket?",
+        "--job-thread-id",
+        "discord-thread-job-1",
+        "--job-thread-name",
+        "print job bracket",
+        "--version-label",
+        "v1",
+        "--json"
+      ])
+    ) as {
+      intake: { id: number };
+      artifact: { id: number };
+      discord_job_thread: { id: number; thread_id: string; thread_name: string };
+      discord_job_artifact: { relationship: string; version_label: string };
+    };
+
+    const second = JSON.parse(
+      runCli([
+        "intake-discord-attachment",
+        "--channel",
+        "general",
+        "--author",
+        "mynamejeef",
+        "--message-id",
+        "discord-message-job-2",
+        "--attachment-path",
+        "tests/fixtures/test_part.stl",
+        "--attachment-filename",
+        "bracket-v2.stl",
+        "--message-content",
+        "Revision with thicker wall.",
+        "--job-thread-record-id",
+        String(first.discord_job_thread.id),
+        "--version-label",
+        "v2",
+        "--artifact-relationship",
+        "revision",
+        "--json"
+      ])
+    ) as {
+      artifact: { id: number };
+      discord_job_thread: { id: number };
+      discord_job_artifact: { relationship: string; version_label: string };
+    };
+
+    expect(first.discord_job_thread.thread_id).toBe("discord-thread-job-1");
+    expect(first.discord_job_thread.thread_name).toBe("print job bracket");
+    expect(first.discord_job_artifact).toMatchObject({ relationship: "primary", version_label: "v1" });
+    expect(second.discord_job_thread.id).toBe(first.discord_job_thread.id);
+    expect(second.discord_job_artifact).toMatchObject({ relationship: "revision", version_label: "v2" });
+
+    const context = JSON.parse(runCli(["show-discord-job-context", "--artifact-id", String(second.artifact.id), "--json"])) as {
+      thread: { id: number; thread_id: string };
+      links: Array<{ artifact_id: number; relationship: string; version_label: string }>;
+    };
+    expect(context.thread.id).toBe(first.discord_job_thread.id);
+    expect(context.thread.thread_id).toBe("discord-thread-job-1");
+    expect(context.links.map((link) => link.artifact_id)).toEqual([first.artifact.id, second.artifact.id]);
+    expect(context.links.map((link) => link.version_label)).toEqual(["v1", "v2"]);
+  });
+
+  it("rejects unsupported Discord attachment types before creating intake records", () => {
+    const unsupportedPath = path.join(tempDir, "notes.txt");
+    fs.writeFileSync(unsupportedPath, "not a model", "utf8");
+
+    expect(() =>
+      runCli([
+        "intake-discord-attachment",
+        "--channel",
+        "general",
+        "--author",
+        "mynamejeef",
+        "--message-id",
+        "discord-message-2",
+        "--attachment-path",
+        unsupportedPath,
+        "--attachment-filename",
+        "notes.txt",
+        "--json"
+      ])
+    ).toThrow(/Unsupported Discord attachment type/);
+
+    const intakes = JSON.parse(runCli(["list-intakes", "--json"])) as unknown[];
+    expect(intakes).toHaveLength(0);
+  });
+
   it("marks an STL file review as valid_enough", () => {
     const intake = JSON.parse(
       runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
@@ -542,6 +690,7 @@ describe("MICBot intake to print package workflow", () => {
     const artifact = JSON.parse(
       runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
     ) as { id: number };
+    runCli(["review-file", "--artifact-id", String(artifact.id), "--json"]);
 
     const printPackage = JSON.parse(
       runCli([
@@ -567,16 +716,24 @@ describe("MICBot intake to print package workflow", () => {
     expect(fs.existsSync(printPackage.preview_path)).toBe(true);
     expect(fs.existsSync(printPackage.prepared_file_path)).toBe(true);
     expect(fs.readFileSync(path.join(printPackage.package_dir, "checklist.md"), "utf8")).toContain("print send requires explicit human approval");
+    expect(fs.readFileSync(path.join(printPackage.package_dir, "handoff.md"), "utf8")).toContain("Bambu Studio Handoff");
     expect(fs.readFileSync(path.join(printPackage.package_dir, "notes.md"), "utf8")).toBe("\n");
-    expect(JSON.parse(fs.readFileSync(path.join(printPackage.package_dir, "package.json"), "utf8"))).toMatchObject({
-      no_autonomous_printing: true,
+    expect(JSON.parse(fs.readFileSync(path.join(printPackage.package_dir, "print_package.json"), "utf8"))).toMatchObject({
+      artifact_type: "stl",
+      material_profile: "PETG",
+      no_unapproved_printing: true,
       quantity: 4
     });
 
     const updated = JSON.parse(
+      runCli(["mark-print-package-status", "--id", String(printPackage.id), "--status", "opened_for_preview", "--json"])
+    ) as { status: string };
+    expect(updated.status).toBe("opened_for_preview");
+
+    const awaitingApproval = JSON.parse(
       runCli(["mark-print-package-status", "--id", String(printPackage.id), "--status", "awaiting_human_approval", "--json"])
     ) as { status: string };
-    expect(updated.status).toBe("awaiting_human_approval");
+    expect(awaitingApproval.status).toBe("awaiting_human_approval");
 
     const shown = JSON.parse(runCli(["show-print-package", "--id", String(printPackage.id), "--json"])) as {
       print_package: { status: string };
@@ -584,18 +741,112 @@ describe("MICBot intake to print package workflow", () => {
     expect(shown.print_package.status).toBe("awaiting_human_approval");
   });
 
+  it("requires reviewed printable artifacts and valid package status transitions", () => {
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
+    ) as { id: number };
+    const artifact = JSON.parse(
+      runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
+    ) as { id: number };
+
+    expect(() =>
+      runCli([
+        "create-print-package",
+        "--intake-request-id",
+        String(intake.id),
+        "--artifact-id",
+        String(artifact.id),
+        "--material-profile",
+        "PETG",
+        "--printer-profile",
+        "default-bambu",
+        "--quantity",
+        "4",
+        "--json"
+      ])
+    ).toThrow(/must be reviewed/);
+
+    runCli(["review-file", "--artifact-id", String(artifact.id), "--json"]);
+    const printPackage = JSON.parse(
+      runCli([
+        "create-print-package",
+        "--intake-request-id",
+        String(intake.id),
+        "--artifact-id",
+        String(artifact.id),
+        "--material-profile",
+        "PETG",
+        "--printer-profile",
+        "default-bambu",
+        "--quantity",
+        "4",
+        "--json"
+      ])
+    ) as { id: number };
+
+    expect(() => runCli(["mark-print-package-status", "--id", String(printPackage.id), "--status", "approved_to_send", "--json"])).toThrow(
+      /Invalid print package status transition/
+    );
+  });
+
+  it("runs the fixture-backed print package smoke path without opening Bambu Studio by default", () => {
+    const smoke = JSON.parse(runCli(["smoke-print-package", "--json"])) as {
+      ok: boolean;
+      intake: { id: number; source: string; status: string };
+      artifact: { id: number; artifact_type: string; sha256: string; size_bytes: number };
+      review: { status: string };
+      print_package: { id: number; status: string; package_dir: string; prepared_file_path: string };
+      package_files: { checklist: string; handoff: string; metadata: string; notes: string };
+      metadata_checks: { artifact_sha256_matches: boolean; artifact_size_matches: boolean; no_unapproved_printing: boolean };
+      remote_inspection_generated: boolean;
+      remote_inspection: {
+        review_card_path: string;
+        preview_files: Record<string, string>;
+        raster_preview_files: Record<string, string>;
+      };
+      preview_open_attempted: boolean;
+      preview: null;
+    };
+
+    expect(smoke.ok).toBe(true);
+    expect(smoke.intake.source).toBe("smoke");
+    expect(smoke.intake.status).toBe("print_package_ready");
+    expect(smoke.artifact.artifact_type).toBe("stl");
+    expect(smoke.artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(smoke.artifact.size_bytes).toBeGreaterThan(0);
+    expect(smoke.review.status).toBe("valid_enough");
+    expect(smoke.print_package.status).toBe("ready_for_preview");
+    expect(fs.existsSync(smoke.print_package.prepared_file_path)).toBe(true);
+    expect(fs.existsSync(smoke.package_files.checklist)).toBe(true);
+    expect(fs.existsSync(smoke.package_files.handoff)).toBe(true);
+    expect(fs.existsSync(smoke.package_files.metadata)).toBe(true);
+    expect(fs.existsSync(smoke.package_files.notes)).toBe(true);
+    expect(smoke.metadata_checks).toEqual({
+      artifact_sha256_matches: true,
+      artifact_size_matches: true,
+      no_unapproved_printing: true
+    });
+    expect(smoke.remote_inspection_generated).toBe(true);
+    expect(fs.existsSync(smoke.remote_inspection.review_card_path)).toBe(true);
+    expect(Object.keys(smoke.remote_inspection.preview_files).sort()).toEqual(["prepare_view_1", "prepare_view_2", "prepare_view_3"]);
+    for (const filePath of Object.values(smoke.remote_inspection.preview_files)) {
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(filePath).toMatch(/\.png$/);
+    }
+    expect(smoke.preview_open_attempted).toBe(false);
+    expect(smoke.preview).toBeNull();
+  });
+
   it("probes Bambu tooling as JSON without requiring Bambu to exist", () => {
     const probe = JSON.parse(runCli(["probe-bambu", "--json"])) as {
       ok: boolean;
       bambu_studio: { found: boolean; paths: string[] };
-      bambu_connect: { found: boolean; paths: string[] };
       studio_config: { configured_printers: unknown[] };
       safety: { sends_to_printer: boolean; requires_login: boolean };
     };
 
     expect(probe.ok).toBe(true);
     expect(Array.isArray(probe.bambu_studio.paths)).toBe(true);
-    expect(Array.isArray(probe.bambu_connect.paths)).toBe(true);
     expect(Array.isArray(probe.studio_config.configured_printers)).toBe(true);
     expect(probe.safety.sends_to_printer).toBe(false);
     expect(probe.safety.requires_login).toBe(false);
@@ -608,6 +859,7 @@ describe("MICBot intake to print package workflow", () => {
     const artifact = JSON.parse(
       runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
     ) as { id: number };
+    runCli(["review-file", "--artifact-id", String(artifact.id), "--json"]);
     const printPackage = JSON.parse(
       runCli([
         "create-print-package",
@@ -639,6 +891,142 @@ describe("MICBot intake to print package workflow", () => {
       expect(opened.opened).toBe(false);
       expect(opened.handoff).toMatchObject({ type: "approve_print_send", status: "open" });
       expect(opened.next_manual_step).toContain("Do not send to printer without approval");
+    }
+  });
+
+  it("creates Auto Arrange handoff without sending to a printer", () => {
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
+    ) as { id: number };
+    const artifact = JSON.parse(
+      runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
+    ) as { id: number };
+    runCli(["review-file", "--artifact-id", String(artifact.id), "--json"]);
+    const printPackage = JSON.parse(
+      runCli([
+        "create-print-package",
+        "--intake-request-id",
+        String(intake.id),
+        "--artifact-id",
+        String(artifact.id),
+        "--material-profile",
+        "PETG",
+        "--printer-profile",
+        "default-bambu",
+        "--quantity",
+        "1",
+        "--json"
+      ])
+    ) as { id: number; package_dir: string };
+
+    const result = JSON.parse(runCli(["request-bambu-auto-arrange", "--print-package-id", String(printPackage.id), "--json"])) as {
+      handoff: { type: string; status: string; instructions: string };
+      attempted_ui_automation: boolean;
+      safety: { sends_to_printer: boolean; requires_human_approval: boolean };
+    };
+
+    expect(result.handoff).toMatchObject({ type: "preview_print_package", status: "open" });
+    expect(result.handoff.instructions).toContain("Auto Arrange");
+    expect(result.attempted_ui_automation).toBe(false);
+    expect(result.safety).toEqual({ sends_to_printer: false, requires_human_approval: true });
+    expect(fs.readFileSync(path.join(printPackage.package_dir, "notes.md"), "utf8")).toContain("Auto Arrange Request");
+  });
+
+  it("generates Discord-friendly remote inspection previews", () => {
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])
+    ) as { id: number };
+    const artifact = JSON.parse(
+      runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
+    ) as { id: number };
+    runCli(["review-file", "--artifact-id", String(artifact.id), "--json"]);
+    const printPackage = JSON.parse(
+      runCli([
+        "create-print-package",
+        "--intake-request-id",
+        String(intake.id),
+        "--artifact-id",
+        String(artifact.id),
+        "--material-profile",
+        "PETG",
+        "--printer-profile",
+        "default-bambu",
+        "--quantity",
+        "1",
+        "--json"
+      ])
+    ) as { id: number };
+    const thread = JSON.parse(
+      runCli([
+        "record-discord-job-thread",
+        "--channel",
+        "general",
+        "--thread-id",
+        "discord-thread-inspection-1",
+        "--thread-name",
+        "inspection thread",
+        "--json"
+      ])
+    ) as { id: number };
+    runCli([
+      "link-discord-job-artifact",
+      "--job-thread-record-id",
+      String(thread.id),
+      "--intake-request-id",
+      String(intake.id),
+      "--artifact-id",
+      String(artifact.id),
+      "--relationship",
+      "plate_member",
+      "--json"
+    ]);
+
+    const inspection = JSON.parse(runCli(["create-remote-inspection", "--print-package-id", String(printPackage.id), "--json"])) as {
+      geometry: { format: string; triangles: number; bounds: { dimensions_mm: number[] } };
+      printability: {
+        orientation_source: string;
+        plate_layout_source: string;
+        bed_size_mm: number[];
+        arranged_instances: Array<{ label: string; mirrored: boolean }>;
+        fits_estimated_layout: boolean;
+        likely_support_triangles: number;
+      };
+      review_card_path: string;
+      preview_type: string;
+      preview_files: Record<string, string>;
+      raster_preview_files: Record<string, string>;
+      auto_arrange: {
+        attempted_ui_automation: boolean;
+        safety: { sends_to_printer: boolean; requires_human_approval: boolean };
+      };
+      discord_target_thread: { thread_id: string; thread_name: string } | null;
+      discord_summary: string;
+      safety: { sends_to_printer: boolean; requires_human_approval: boolean };
+    };
+
+    expect(inspection.geometry.format).toBe("ascii_stl");
+    expect(inspection.geometry.triangles).toBe(1);
+    expect(inspection.geometry.bounds.dimensions_mm).toEqual([1, 1, 0]);
+    expect(inspection.preview_type).toBe("bambu_studio_style_raster");
+    expect(Object.keys(inspection.preview_files).sort()).toEqual(["prepare_view_1", "prepare_view_2", "prepare_view_3"]);
+    expect(inspection.preview_files).toEqual(inspection.raster_preview_files);
+    expect(inspection.auto_arrange.attempted_ui_automation).toBe(true);
+    expect(inspection.auto_arrange.safety).toEqual({ sends_to_printer: false, requires_human_approval: true });
+    expect(inspection.printability.orientation_source).toBe("package_coordinates");
+    expect(inspection.printability.plate_layout_source).toBe("estimated_centered_grid");
+    expect(inspection.printability.bed_size_mm).toEqual([256, 256]);
+    expect(inspection.printability.arranged_instances).toHaveLength(1);
+    expect(inspection.printability.arranged_instances[0].mirrored).toBe(false);
+    expect(inspection.printability.fits_estimated_layout).toBe(true);
+    expect(fs.existsSync(inspection.review_card_path)).toBe(true);
+    expect(inspection.discord_summary).toContain("MICBot remote inspection");
+    expect(inspection.discord_summary).toContain("Bambu Studio style raster screenshots only");
+    expect(inspection.discord_summary).toContain("Auto Arrange");
+    expect(inspection.discord_target_thread).toMatchObject({ thread_id: "discord-thread-inspection-1", thread_name: "inspection thread" });
+    expect(inspection.safety).toEqual({ sends_to_printer: false, requires_human_approval: true });
+    for (const filePath of Object.values(inspection.preview_files)) {
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(filePath).toMatch(/\.png$/);
     }
   });
 });

@@ -83,6 +83,39 @@ CREATE TABLE IF NOT EXISTS artifacts (
   FOREIGN KEY(raw_message_id) REFERENCES raw_messages(id)
 );
 
+CREATE TABLE IF NOT EXISTS discord_job_threads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'archived', 'cancelled')) DEFAULT 'active',
+  guild_id TEXT,
+  channel_id TEXT,
+  channel TEXT NOT NULL,
+  thread_id TEXT NOT NULL UNIQUE,
+  thread_name TEXT NOT NULL,
+  source_message_id TEXT,
+  customer_name TEXT,
+  summary TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS discord_job_artifacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  discord_job_thread_id INTEGER NOT NULL,
+  intake_request_id INTEGER NOT NULL,
+  artifact_id INTEGER NOT NULL,
+  version_label TEXT NOT NULL DEFAULT '',
+  relationship TEXT NOT NULL CHECK (relationship IN ('primary', 'revision', 'plate_member')) DEFAULT 'primary',
+  status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'rejected')) DEFAULT 'active',
+  notes TEXT NOT NULL DEFAULT '',
+  UNIQUE(discord_job_thread_id, artifact_id),
+  FOREIGN KEY(discord_job_thread_id) REFERENCES discord_job_threads(id),
+  FOREIGN KEY(intake_request_id) REFERENCES intake_requests(id),
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
+);
+
 CREATE TABLE IF NOT EXISTS file_reviews (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -110,6 +143,7 @@ CREATE TABLE IF NOT EXISTS print_packages (
     'awaiting_human_approval',
     'approved_to_send',
     'rejected',
+    'revise_requested',
     'sent_to_printer',
     'printing',
     'failed',

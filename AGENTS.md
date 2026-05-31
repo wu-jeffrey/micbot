@@ -14,7 +14,7 @@ Do not replace OpenClaw memory with MICBot memory.
 
 ## Current Scope
 
-The current scope is the fastest path to business impact: intake -> artifact -> print package -> Bambu preview -> human approval.
+The current scope is the fastest path to business impact: intake -> artifact -> print package -> Bambu preview -> human approval -> approved print send.
 
 The memory primitive is:
 
@@ -26,9 +26,9 @@ SQLite remains the source of truth. The canonical generated MICBot wiki path is 
 
 The print workflow primitive is:
 
-intake request -> managed artifact storage -> basic file review -> local print package -> human-visible Bambu preview -> explicit approval handoff
+intake request -> managed artifact storage -> basic file review -> local print package -> human-visible Bambu preview -> explicit approval handoff -> approved send attempt
 
-Do not send anything to a printer autonomously. Do not build black-box printer control. Prefer human-visible Bambu Studio/Bambu Connect preview and explicit approve/reject/revise states before any future printer send.
+Printer send boundary: MICBot may trigger the final Bambu Studio print/send action only after Jeff explicitly approves the exact package, material, quantity, and target printer in the current conversation. Before sending, verify the visible Bambu Studio state or equivalent CLI/API target. Log the approval, target printer, material, package, and send result. Do not build black-box printer control and do not send without explicit approval.
 
 ## OpenClaw Capture Rules
 
@@ -38,7 +38,7 @@ Do not send anything to a printer autonomously. Do not build black-box printer c
 4. MICBot is the local business memory/tool substrate.
 5. MICBot should be surface-neutral.
 6. Discord, Slack, and Web UI are OpenClaw interface surfaces, not separate MICBot systems yet.
-7. Do not build channel-specific integrations until the core local tool layer is stable.
+7. Keep channel-specific work as local CLI primitives until the core tool layer is stable.
 8. Do not build a separate MICBot Discord bot yet.
 9. Do not build a separate MICBot Slack bot yet.
 10. Capture business-relevant user instructions as raw messages.
@@ -53,7 +53,8 @@ Do not send anything to a printer autonomously. Do not build black-box printer c
 19. Wiki entries are distilled understanding.
 20. SQLite remains the source of truth.
 21. `data/wiki/` is the canonical generated wiki path.
-22. Human approval handoffs now exist for print package review; keep them explicit and auditable.
+22. Human approval handoffs now exist for print package review and approved print sends; keep them explicit and auditable.
+23. Discord attachment intake is a local CLI primitive only; OpenClaw remains responsible for receiving the message and resolving the attachment file.
 
 ## Surface Model
 
@@ -63,6 +64,6 @@ Use `channel` for the specific channel, session, or context, such as `general`, 
 
 ## Do Not Build Yet
 
-Do not build browser automation, autonomous printer automation, Discord bot integration, Slack bot integration, Web UI listeners, marketplace automation, website automation, slicer-level STL inspection, mesh repair, MCP servers, multi-agent runtimes, embeddings, vector search, RAG, or automatic memory summarization.
+Do not build browser automation, unapproved printer automation, a separate Discord bot, Slack bot integration, Web UI listeners, marketplace automation, website automation, slicer-level STL inspection, mesh repair, MCP servers, multi-agent runtimes, embeddings, vector search, RAG, or automatic memory summarization.
 
 Prefer small, testable, durable changes. Do not overbuild.
