@@ -26,6 +26,7 @@ import {
   latestHumanHandoffForPrintPackage,
   linkDiscordJobArtifact,
   listArtifacts,
+  listModelCandidates,
   listIntakes,
   listProductionWorkflowPlans,
   markPrintPackageStatus,
@@ -33,14 +34,17 @@ import {
   planProductionWorkflow,
   probeBambu,
   recordDiscordJobThread,
+  recordModelCandidate,
   requestBambuAutoArrange,
   reviewFile,
   showArtifact,
   showFileReview,
   showIntake,
   showLatestFileReviewForArtifact,
+  showModelCandidate,
   showPrintPackage,
   showProductionWorkflowPlan,
+  selectModelCandidate,
   storeArtifact,
   updateIntakeStatus
 } from "./intakeWorkflow.js";
@@ -598,6 +602,93 @@ program
       options.intakeRequestId ? parseRequiredId(options.intakeRequestId, "intake-request-id") : undefined
     );
     writeOutput(rows, options.json, `Found ${rows.length} production workflow plan(s).`);
+  });
+
+program
+  .command("record-model-candidate")
+  .description("Record a searched/generated model candidate with provenance before selection or packaging")
+  .requiredOption("--source <source>")
+  .requiredOption("--source-url <url>")
+  .requiredOption("--title <title>")
+  .option("--production-workflow-plan-id <id>")
+  .option("--intake-request-id <id>")
+  .option("--artifact-id <id>")
+  .option("--author <author>")
+  .option("--license <license>")
+  .option("--file-url <url>")
+  .option("--thumbnail-path <path>")
+  .option("--local-artifact-id <id>")
+  .option("--fit-status <status>", "unknown, fits, too_large, or needs_review")
+  .option("--dimensions-json <json>")
+  .option("--score <score>")
+  .option("--notes <notes>")
+  .option("--metadata-json <json>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = recordModelCandidate({
+      productionWorkflowPlanId: options.productionWorkflowPlanId
+        ? parseRequiredId(options.productionWorkflowPlanId, "production-workflow-plan-id")
+        : undefined,
+      intakeRequestId: options.intakeRequestId ? parseRequiredId(options.intakeRequestId, "intake-request-id") : undefined,
+      artifactId: options.artifactId ? parseRequiredId(options.artifactId, "artifact-id") : undefined,
+      source: options.source,
+      sourceUrl: options.sourceUrl,
+      title: options.title,
+      author: options.author,
+      license: options.license,
+      fileUrl: options.fileUrl,
+      thumbnailPath: options.thumbnailPath,
+      localArtifactId: options.localArtifactId ? parseRequiredId(options.localArtifactId, "local-artifact-id") : undefined,
+      fitStatus: options.fitStatus,
+      dimensionsJson: options.dimensionsJson,
+      score: options.score === undefined ? undefined : Number(options.score),
+      notes: options.notes,
+      metadataJson: options.metadataJson
+    });
+    writeOutput(row, options.json, `Recorded model candidate ${row.id}: ${row.title}.`);
+  });
+
+program
+  .command("list-model-candidates")
+  .option("--production-workflow-plan-id <id>")
+  .option("--intake-request-id <id>")
+  .option("--status <status>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const rows = listModelCandidates({
+      productionWorkflowPlanId: options.productionWorkflowPlanId
+        ? parseRequiredId(options.productionWorkflowPlanId, "production-workflow-plan-id")
+        : undefined,
+      intakeRequestId: options.intakeRequestId ? parseRequiredId(options.intakeRequestId, "intake-request-id") : undefined,
+      status: options.status
+    });
+    writeOutput(rows, options.json, `Found ${rows.length} model candidate(s).`);
+  });
+
+program
+  .command("show-model-candidate")
+  .requiredOption("--id <id>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = showModelCandidate(parseRequiredId(options.id));
+    if (!row) {
+      throw new Error(`Model candidate not found: ${options.id}`);
+    }
+    writeOutput(row, options.json, `Model candidate ${row.id}: ${row.title}.`);
+  });
+
+program
+  .command("select-model-candidate")
+  .requiredOption("--id <id>")
+  .option("--notes <notes>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = selectModelCandidate(parseRequiredId(options.id), options.notes);
+    writeOutput(row, options.json, `Selected model candidate ${row.id}: ${row.title}.`);
   });
 
 program

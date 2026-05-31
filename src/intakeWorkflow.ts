@@ -182,6 +182,29 @@ export interface ProductionWorkflowPlan {
   safety: { sends_to_printer: false; requires_explicit_approval_before_send: true };
 }
 
+export interface ModelCandidateRow {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  production_workflow_plan_id: number | null;
+  intake_request_id: number | null;
+  artifact_id: number | null;
+  source: string;
+  source_url: string;
+  title: string;
+  author: string;
+  license: string;
+  file_url: string;
+  thumbnail_path: string;
+  local_artifact_id: number | null;
+  fit_status: "unknown" | "fits" | "too_large" | "needs_review";
+  dimensions_json: string;
+  score: number;
+  status: "candidate" | "selected" | "rejected" | "imported" | "superseded";
+  notes: string;
+  metadata_json: string;
+}
+
 export interface DiscordJobContext {
   thread: DiscordJobThreadRow;
   links: DiscordJobArtifactRow[];
@@ -647,6 +670,148 @@ export function listProductionWorkflowPlans(intakeRequestId?: number): Productio
     return getDb().prepare(`${sql} WHERE intake_request_id = ? ORDER BY id`).all(intakeRequestId) as ProductionWorkflowPlanRow[];
   }
   return getDb().prepare(`${sql} ORDER BY id`).all() as ProductionWorkflowPlanRow[];
+}
+
+export function showModelCandidate(id: number): ModelCandidateRow | undefined {
+  return getDb()
+    .prepare(
+      `SELECT id, created_at, updated_at, production_workflow_plan_id, intake_request_id, artifact_id,
+              source, source_url, title, author, license, file_url, thumbnail_path, local_artifact_id,
+              fit_status, dimensions_json, score, status, notes, metadata_json
+       FROM model_candidates
+       WHERE id = ?`
+    )
+    .get(id) as ModelCandidateRow | undefined;
+}
+
+export function recordModelCandidate(input: {
+  productionWorkflowPlanId?: number;
+  intakeRequestId?: number;
+  artifactId?: number;
+  source: string;
+  sourceUrl: string;
+  title: string;
+  author?: string;
+  license?: string;
+  fileUrl?: string;
+  thumbnailPath?: string;
+  localArtifactId?: number;
+  fitStatus?: string;
+  dimensionsJson?: string;
+  score?: number;
+  notes?: string;
+  metadataJson?: string;
+}): ModelCandidateRow {
+  assertNonBlank(input.source, "Model candidate source");
+  assertNonBlank(input.sourceUrl, "Model candidate source URL");
+  assertNonBlank(input.title, "Model candidate title");
+  const fitStatus = input.fitStatus ?? "unknown";
+  assertChoice(fitStatus, ["unknown", "fits", "too_large", "needs_review"] as const, "model candidate fit status");
+  const dimensionsJson = parseJsonOrDefault(input.dimensionsJson, "{}");
+  const metadataJson = parseJsonOrDefault(input.metadataJson, "{}");
+
+  if (input.productionWorkflowPlanId && !showProductionWorkflowPlan(input.productionWorkflowPlanId)) {
+    throw new Error(`Production workflow plan not found: ${input.productionWorkflowPlanId}`);
+  }
+  if (input.intakeRequestId && !showIntake(input.intakeRequestId)) {
+    throw new Error(`Intake request not found: ${input.intakeRequestId}`);
+  }
+  if (input.artifactId && !showArtifact(input.artifactId)) {
+    throw new Error(`Artifact not found: ${input.artifactId}`);
+  }
+  if (input.localArtifactId && !showArtifact(input.localArtifactId)) {
+    throw new Error(`Local artifact not found: ${input.localArtifactId}`);
+  }
+
+  const result = getDb()
+    .prepare(
+      `INSERT INTO model_candidates
+       (production_workflow_plan_id, intake_request_id, artifact_id, source, source_url, title, author,
+        license, file_url, thumbnail_path, local_artifact_id, fit_status, dimensions_json, score, notes, metadata_json)
+       VALUES (@productionWorkflowPlanId, @intakeRequestId, @artifactId, @source, @sourceUrl, @title, @author,
+        @license, @fileUrl, @thumbnailPath, @localArtifactId, @fitStatus, @dimensionsJson, @score, @notes, @metadataJson)`
+    )
+    .run({
+      productionWorkflowPlanId: input.productionWorkflowPlanId ?? null,
+      intakeRequestId: input.intakeRequestId ?? null,
+      artifactId: input.artifactId ?? null,
+      source: input.source,
+      sourceUrl: input.sourceUrl,
+      title: input.title,
+      author: input.author ?? "",
+      license: input.license ?? "",
+      fileUrl: input.fileUrl ?? "",
+      thumbnailPath: input.thumbnailPath ?? "",
+      localArtifactId: input.localArtifactId ?? null,
+      fitStatus,
+      dimensionsJson,
+      score: input.score ?? 0,
+      notes: input.notes ?? "",
+      metadataJson
+    });
+
+  return showModelCandidate(Number(result.lastInsertRowid))!;
+}
+
+export function listModelCandidates(input: {
+  productionWorkflowPlanId?: number;
+  intakeRequestId?: number;
+  status?: string;
+} = {}): ModelCandidateRow[] {
+  if (input.status) {
+    assertChoice(input.status, ["candidate", "selected", "rejected", "imported", "superseded"] as const, "model candidate status");
+  }
+  const clauses: string[] = [];
+  const params: Record<string, unknown> = {};
+  if (input.productionWorkflowPlanId) {
+    clauses.push("production_workflow_plan_id = @productionWorkflowPlanId");
+    params.productionWorkflowPlanId = input.productionWorkflowPlanId;
+  }
+  if (input.intakeRequestId) {
+    clauses.push("intake_request_id = @intakeRequestId");
+    params.intakeRequestId = input.intakeRequestId;
+  }
+  if (input.status) {
+    clauses.push("status = @status");
+    params.status = input.status;
+  }
+
+  const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+  return getDb()
+    .prepare(
+      `SELECT id, created_at, updated_at, production_workflow_plan_id, intake_request_id, artifact_id,
+              source, source_url, title, author, license, file_url, thumbnail_path, local_artifact_id,
+              fit_status, dimensions_json, score, status, notes, metadata_json
+       FROM model_candidates${where}
+       ORDER BY score DESC, id`
+    )
+    .all(params) as ModelCandidateRow[];
+}
+
+export function selectModelCandidate(id: number, notes?: string): ModelCandidateRow {
+  const candidate = showModelCandidate(id);
+  if (!candidate) {
+    throw new Error(`Model candidate not found: ${id}`);
+  }
+  const scopeClause = candidate.production_workflow_plan_id
+    ? "production_workflow_plan_id = @scopeId"
+    : candidate.intake_request_id
+      ? "intake_request_id = @scopeId"
+      : "id = @scopeId";
+  const scopeId = candidate.production_workflow_plan_id ?? candidate.intake_request_id ?? candidate.id;
+  getDb()
+    .prepare(`UPDATE model_candidates SET status = 'superseded', updated_at = datetime('now') WHERE ${scopeClause} AND id != @id AND status = 'selected'`)
+    .run({ scopeId, id });
+  getDb()
+    .prepare(
+      `UPDATE model_candidates
+       SET status = 'selected',
+           notes = CASE WHEN @notes = '' THEN notes ELSE @notes END,
+           updated_at = datetime('now')
+       WHERE id = @id`
+    )
+    .run({ id, notes: notes ?? "" });
+  return showModelCandidate(id)!;
 }
 
 function contentTypeFor(type: ArtifactType): string {

@@ -66,6 +66,30 @@ Expected workflow:
 
 MICBot must add business checks claw3d does not enforce: provenance, license, revision history, package status, and approval logs.
 
+Candidate models are recorded before selection:
+
+```bash
+npm run cli -- record-model-candidate \
+ --production-workflow-plan-id 1 \
+ --source thingiverse \
+ --source-url "https://www.thingiverse.com/thing:123" \
+ --title "Desk phone holder" \
+ --author "example-maker" \
+ --license "CC-BY" \
+ --fit-status fits \
+ --dimensions-json '{"x":80,"y":70,"z":120}' \
+ --score 90 \
+ --json
+```
+
+Select the candidate Jeff chooses:
+
+```bash
+npm run cli -- select-model-candidate --id 1 --notes "Jeff picked option A." --json
+```
+
+Only a selected candidate should be imported into an artifact and turned into a print package.
+
 ### CAD Design
 
 Use for mechanical, dimensional, or fit-critical work.
@@ -138,9 +162,14 @@ List recorded plans:
 npm run cli -- list-production-workflow-plans --json
 ```
 
+List model candidates for a plan:
+
+```bash
+npm run cli -- list-model-candidates --production-workflow-plan-id 1 --json
+```
+
 ## Safety Boundary
 
 The workflow planner never sends to printers. It only records the intended route and next steps.
 
 Final printer sends remain gated by Jeff approving the exact package, material, quantity, and target printer in the current conversation. MICBot must verify visible Bambu Studio state or an equivalent target before triggering the send, then log the attempt and result.
-

@@ -746,6 +746,103 @@ describe("MICBot intake to print package workflow", () => {
     expect(listed[0].id).toBe(recorded.workflow_plan.id);
   });
 
+  it("records and selects model candidates with provenance", () => {
+    const intake = JSON.parse(
+      runCli([
+        "create-intake",
+        "--source",
+        "manual",
+        "--surface",
+        "openclaw_discord",
+        "--channel",
+        "intake",
+        "--message",
+        "Find a phone holder.",
+        "--json"
+      ])
+    ) as { id: number };
+    const plan = JSON.parse(
+      runCli([
+        "plan-production-workflow",
+        "--message",
+        "Find a phone holder.",
+        "--source-kind",
+        "text",
+        "--intake-request-id",
+        String(intake.id),
+        "--record",
+        "--json"
+      ])
+    ) as { workflow_plan: { id: number } };
+
+    const first = JSON.parse(
+      runCli([
+        "record-model-candidate",
+        "--production-workflow-plan-id",
+        String(plan.workflow_plan.id),
+        "--intake-request-id",
+        String(intake.id),
+        "--source",
+        "thingiverse",
+        "--source-url",
+        "https://www.thingiverse.com/thing:111",
+        "--title",
+        "Phone holder A",
+        "--author",
+        "maker-a",
+        "--license",
+        "CC-BY",
+        "--fit-status",
+        "fits",
+        "--dimensions-json",
+        "{\"x\":80,\"y\":70,\"z\":120}",
+        "--score",
+        "90",
+        "--json"
+      ])
+    ) as { id: number; source_url: string; status: string; fit_status: string; score: number };
+    const second = JSON.parse(
+      runCli([
+        "record-model-candidate",
+        "--production-workflow-plan-id",
+        String(plan.workflow_plan.id),
+        "--intake-request-id",
+        String(intake.id),
+        "--source",
+        "printables",
+        "--source-url",
+        "https://www.printables.com/model/222",
+        "--title",
+        "Phone holder B",
+        "--license",
+        "CC-BY-SA",
+        "--fit-status",
+        "needs_review",
+        "--score",
+        "50",
+        "--json"
+      ])
+    ) as { id: number; status: string };
+
+    expect(first.source_url).toBe("https://www.thingiverse.com/thing:111");
+    expect(first.fit_status).toBe("fits");
+    expect(first.score).toBe(90);
+    expect(second.status).toBe("candidate");
+
+    const selected = JSON.parse(runCli(["select-model-candidate", "--id", String(first.id), "--notes", "Best commercial fit.", "--json"])) as {
+      id: number;
+      status: string;
+      notes: string;
+    };
+    expect(selected).toMatchObject({ id: first.id, status: "selected", notes: "Best commercial fit." });
+
+    const listed = JSON.parse(
+      runCli(["list-model-candidates", "--production-workflow-plan-id", String(plan.workflow_plan.id), "--json"])
+    ) as Array<{ id: number; status: string; score: number }>;
+    expect(listed.map((candidate) => candidate.id)).toEqual([first.id, second.id]);
+    expect(listed.find((candidate) => candidate.id === first.id)?.status).toBe("selected");
+  });
+
   it("creates a print package with checklist, notes, and metadata, then updates status", () => {
     const intake = JSON.parse(
       runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])

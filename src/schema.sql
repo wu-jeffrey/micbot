@@ -153,6 +153,33 @@ CREATE TABLE IF NOT EXISTS production_workflow_plans (
   FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
 );
 
+CREATE TABLE IF NOT EXISTS model_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  production_workflow_plan_id INTEGER,
+  intake_request_id INTEGER,
+  artifact_id INTEGER,
+  source TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  author TEXT NOT NULL DEFAULT '',
+  license TEXT NOT NULL DEFAULT '',
+  file_url TEXT NOT NULL DEFAULT '',
+  thumbnail_path TEXT NOT NULL DEFAULT '',
+  local_artifact_id INTEGER,
+  fit_status TEXT NOT NULL CHECK (fit_status IN ('unknown', 'fits', 'too_large', 'needs_review')) DEFAULT 'unknown',
+  dimensions_json TEXT NOT NULL DEFAULT '{}',
+  score INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK (status IN ('candidate', 'selected', 'rejected', 'imported', 'superseded')) DEFAULT 'candidate',
+  notes TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY(production_workflow_plan_id) REFERENCES production_workflow_plans(id),
+  FOREIGN KEY(intake_request_id) REFERENCES intake_requests(id),
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id),
+  FOREIGN KEY(local_artifact_id) REFERENCES artifacts(id)
+);
+
 CREATE TABLE IF NOT EXISTS print_packages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),

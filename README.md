@@ -122,6 +122,19 @@ npm run cli -- plan-production-workflow \
 
 Routes are `search_existing`, `cad_design`, `mesh_generation`, `direct_print_package`, `needs_clarification`, and `non_print_request`. Add `--record` to persist the plan in SQLite. See `docs/production_3d_workflow.md`.
 
+Search results or generated options should be captured as model candidates before selection:
+
+```bash
+npm run cli -- record-model-candidate \
+ --production-workflow-plan-id 1 \
+ --source thingiverse \
+ --source-url "https://www.thingiverse.com/thing:123" \
+ --title "Desk phone holder" \
+ --license "CC-BY" \
+ --fit-status fits \
+ --json
+```
+
 ## Tests
 
 ```bash
