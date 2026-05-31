@@ -130,6 +130,29 @@ CREATE TABLE IF NOT EXISTS file_reviews (
   FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
 );
 
+CREATE TABLE IF NOT EXISTS production_workflow_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  intake_request_id INTEGER,
+  artifact_id INTEGER,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('text', 'image', 'video', 'model', 'cad', 'unknown')),
+  route TEXT NOT NULL CHECK (route IN (
+    'search_existing',
+    'cad_design',
+    'mesh_generation',
+    'direct_print_package',
+    'needs_clarification',
+    'non_print_request'
+  )),
+  object_query TEXT NOT NULL DEFAULT '',
+  route_reason TEXT NOT NULL,
+  workflow_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('planned', 'in_progress', 'superseded', 'completed', 'cancelled')) DEFAULT 'planned',
+  FOREIGN KEY(intake_request_id) REFERENCES intake_requests(id),
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
+);
+
 CREATE TABLE IF NOT EXISTS print_packages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),

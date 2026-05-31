@@ -27,8 +27,10 @@ import {
   linkDiscordJobArtifact,
   listArtifacts,
   listIntakes,
+  listProductionWorkflowPlans,
   markPrintPackageStatus,
   openPrintPackagePreview,
+  planProductionWorkflow,
   probeBambu,
   recordDiscordJobThread,
   requestBambuAutoArrange,
@@ -38,6 +40,7 @@ import {
   showIntake,
   showLatestFileReviewForArtifact,
   showPrintPackage,
+  showProductionWorkflowPlan,
   storeArtifact,
   updateIntakeStatus
 } from "./intakeWorkflow.js";
@@ -550,6 +553,52 @@ program.command("review-file").requiredOption("--artifact-id <id>").option("--js
   const row = reviewFile(parseRequiredId(options.artifactId, "artifact-id"));
   writeOutput(row, options.json, `Reviewed artifact ${row.artifact_id}: ${row.status}.`);
 });
+
+program
+  .command("plan-production-workflow")
+  .description("Route a physical-object request into MICBot's search/CAD/mesh/package workflow")
+  .requiredOption("--message <message>")
+  .option("--source-kind <kind>", "text, image, video, model, cad, or unknown", "text")
+  .option("--intake-request-id <id>")
+  .option("--artifact-id <id>")
+  .option("--record", "Persist the workflow plan in SQLite")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const result = planProductionWorkflow({
+      message: options.message,
+      sourceKind: options.sourceKind,
+      intakeRequestId: options.intakeRequestId ? parseRequiredId(options.intakeRequestId, "intake-request-id") : undefined,
+      artifactId: options.artifactId ? parseRequiredId(options.artifactId, "artifact-id") : undefined,
+      record: options.record === true
+    });
+    writeOutput(result, options.json, `Planned production workflow route: ${result.route}.`);
+  });
+
+program
+  .command("show-production-workflow-plan")
+  .requiredOption("--id <id>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const row = showProductionWorkflowPlan(parseRequiredId(options.id));
+    if (!row) {
+      throw new Error(`Production workflow plan not found: ${options.id}`);
+    }
+    writeOutput(row, options.json, `Production workflow plan ${row.id}: ${row.route}.`);
+  });
+
+program
+  .command("list-production-workflow-plans")
+  .option("--intake-request-id <id>")
+  .option("--json", "Output valid JSON only")
+  .action((options) => {
+    initDb();
+    const rows = listProductionWorkflowPlans(
+      options.intakeRequestId ? parseRequiredId(options.intakeRequestId, "intake-request-id") : undefined
+    );
+    writeOutput(rows, options.json, `Found ${rows.length} production workflow plan(s).`);
+  });
 
 program
   .command("show-file-review")

@@ -30,6 +30,12 @@ intake request -> managed artifact storage -> basic file review -> local print p
 
 Printer send boundary: MICBot may trigger the final Bambu Studio print/send action only after Jeff explicitly approves the exact package, material, quantity, and target printer in the current conversation. Before sending, verify the visible Bambu Studio state or equivalent CLI/API target. Log the approval, target printer, material, package, and send result. Do not build black-box printer control and do not send without explicit approval.
 
+The production 3D workflow primitive is:
+
+physical-object request -> route as search_existing/cad_design/mesh_generation/direct_print_package -> preserve provenance and assumptions -> package -> Bambu preview -> approval -> approved send.
+
+For common functional objects, search existing model sources first. For fit-critical mechanical parts, prefer STEP-first CAD. For organic/decorative/custom media references, use mesh generation. For supplied STL/3MF/STEP/STP files, go directly to reviewed print package creation.
+
 ## OpenClaw Capture Rules
 
 1. Jeff should not manually run the CLI during normal operation.

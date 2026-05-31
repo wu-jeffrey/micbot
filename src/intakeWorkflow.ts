@@ -147,6 +147,41 @@ export interface DiscordJobArtifactRow {
   notes: string;
 }
 
+export type ProductionSourceKind = "text" | "image" | "video" | "model" | "cad" | "unknown";
+export type ProductionRoute =
+  | "search_existing"
+  | "cad_design"
+  | "mesh_generation"
+  | "direct_print_package"
+  | "needs_clarification"
+  | "non_print_request";
+
+export interface ProductionWorkflowPlanRow {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  intake_request_id: number | null;
+  artifact_id: number | null;
+  source_kind: ProductionSourceKind;
+  route: ProductionRoute;
+  object_query: string;
+  route_reason: string;
+  workflow_json: string;
+  status: "planned" | "in_progress" | "superseded" | "completed" | "cancelled";
+}
+
+export interface ProductionWorkflowPlan {
+  route: ProductionRoute;
+  source_kind: ProductionSourceKind;
+  object_query: string;
+  route_reason: string;
+  next_steps: string[];
+  required_user_inputs: string[];
+  micbot_outputs: string[];
+  approval_gate: string;
+  safety: { sends_to_printer: false; requires_explicit_approval_before_send: true };
+}
+
 export interface DiscordJobContext {
   thread: DiscordJobThreadRow;
   links: DiscordJobArtifactRow[];
@@ -358,6 +393,260 @@ function assertPrintableArtifact(artifact: ArtifactRow): void {
   if (review.status !== "valid_enough") {
     throw new Error(`Artifact ${artifact.id} is not valid enough for print package creation: ${review.status}`);
   }
+}
+
+function normalizeSourceKind(value: string | undefined): ProductionSourceKind {
+  const sourceKind = (value ?? "unknown").toLowerCase();
+  assertChoice(sourceKind, ["text", "image", "video", "model", "cad", "unknown"] as const, "production source kind");
+  return sourceKind;
+}
+
+function extractObjectQuery(message: string): string {
+  return message
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\b(can you|could you|please|pls|make|create|generate|find|search|look for|print|3d print|prototype|need|want|me|a|an|the|this|that|for|to|of|with|from|like)\b/g, " ")
+    .replace(/[^a-z0-9._ -]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+const commonPrintableObjects = [
+  "adapter",
+  "bin",
+  "box",
+  "bracket",
+  "cable",
+  "case",
+  "clip",
+  "cover",
+  "desk",
+  "drawer",
+  "fixture",
+  "holder",
+  "hook",
+  "jig",
+  "mount",
+  "organizer",
+  "phone",
+  "rack",
+  "shelf",
+  "spacer",
+  "stand",
+  "tray",
+  "vase"
+];
+
+const mechanicalCadSignals = [
+  "bolt",
+  "boss",
+  "bracket",
+  "bushing",
+  "cad",
+  "clearance",
+  "counterbore",
+  "countersink",
+  "dimension",
+  "fit",
+  "hole",
+  "lid",
+  "m3",
+  "m4",
+  "m5",
+  "mount",
+  "parametric",
+  "plate",
+  "slot",
+  "step",
+  "stp",
+  "thread",
+  "tolerance"
+];
+
+function includesAny(text: string, values: string[]): boolean {
+  return values.some((value) => text.includes(value));
+}
+
+function workflowFor(route: ProductionRoute, sourceKind: ProductionSourceKind, objectQuery: string, routeReason: string): ProductionWorkflowPlan {
+  const base = {
+    route,
+    source_kind: sourceKind,
+    object_query: objectQuery,
+    route_reason: routeReason,
+    safety: { sends_to_printer: false as const, requires_explicit_approval_before_send: true as const }
+  };
+
+  switch (route) {
+    case "search_existing":
+      return {
+        ...base,
+        next_steps: [
+          "Search model libraries for commercially usable candidates.",
+          "Store source URL, author, license, files, and thumbnails.",
+          "Present candidate options for selection.",
+          "Package the selected model, auto-arrange in Bambu Studio, and generate Bambu-style raster previews."
+        ],
+        required_user_inputs: ["Pick candidate model or request another search round.", "Approve exact package/material/quantity/printer before send."],
+        micbot_outputs: ["candidate option card", "model provenance record", "print package", "Bambu preview screenshots", "approval handoff"],
+        approval_gate: "candidate selection before packaging; explicit print-send approval before final Bambu send"
+      };
+    case "cad_design":
+      return {
+        ...base,
+        next_steps: [
+          "Create a natural-language CAD brief with dimensions, fit constraints, and assumptions.",
+          "Generate or modify STEP-first CAD source, then export STL/3MF sidecars.",
+          "Validate geometry with deterministic checks and snapshots.",
+          "Package the export, auto-arrange in Bambu Studio, and generate Bambu-style raster previews."
+        ],
+        required_user_inputs: ["Confirm missing fit-critical dimensions if needed.", "Approve CAD snapshot/package before print send."],
+        micbot_outputs: ["CAD brief", "STEP/source artifact", "STL/3MF export", "validation notes", "Bambu preview screenshots", "approval handoff"],
+        approval_gate: "CAD review before package approval; explicit print-send approval before final Bambu send"
+      };
+    case "mesh_generation":
+      return {
+        ...base,
+        next_steps: [
+          "Extract the best image/frame reference if media was supplied.",
+          "Generate a mesh model for organic/decorative geometry.",
+          "Ask for real-world max size before slicing.",
+          "Package the generated mesh, auto-arrange in Bambu Studio, and generate Bambu-style raster previews."
+        ],
+        required_user_inputs: ["Provide or approve max physical size.", "Approve generated shape and exact print package before send."],
+        micbot_outputs: ["generated mesh", "size assumptions", "print package", "Bambu preview screenshots", "approval handoff"],
+        approval_gate: "shape and scale approval before packaging; explicit print-send approval before final Bambu send"
+      };
+    case "direct_print_package":
+      return {
+        ...base,
+        next_steps: [
+          "Store and review the supplied printable artifact.",
+          "Create a print package with material, quantity, and target printer.",
+          "Auto-arrange in Bambu Studio and generate Bambu-style raster previews.",
+          "Wait for explicit approval before sending."
+        ],
+        required_user_inputs: ["Material, quantity, and target printer if missing.", "Explicit package/material/quantity/printer approval before send."],
+        micbot_outputs: ["file review", "print package", "Bambu preview screenshots", "approval handoff"],
+        approval_gate: "explicit print-send approval before final Bambu send"
+      };
+    case "needs_clarification":
+      return {
+        ...base,
+        next_steps: ["Ask one focused question to identify the object or missing fit-critical constraint.", "Resume routing after the answer."],
+        required_user_inputs: ["Clarify the object or key constraint."],
+        micbot_outputs: ["clarification prompt"],
+        approval_gate: "no print package until request is clear"
+      };
+    case "non_print_request":
+      return {
+        ...base,
+        next_steps: ["Handle outside the production print workflow."],
+        required_user_inputs: [],
+        micbot_outputs: ["non-print response"],
+        approval_gate: "not applicable"
+      };
+  }
+}
+
+export function planProductionWorkflow(input: {
+  message: string;
+  sourceKind?: string;
+  intakeRequestId?: number;
+  artifactId?: number;
+  record?: boolean;
+}): ProductionWorkflowPlan | (ProductionWorkflowPlan & { workflow_plan: ProductionWorkflowPlanRow }) {
+  const message = input.message.trim();
+  const sourceKind = normalizeSourceKind(input.sourceKind);
+  if (!message && sourceKind === "unknown") {
+    throw new Error("Message or source kind is required to plan a production workflow");
+  }
+
+  const lower = message.toLowerCase();
+  const objectQuery = extractObjectQuery(message);
+  const hasPrintIntent = /\b(print|3d print|prototype|model|stl|3mf|step|cad|part|object|case|holder|mount|bracket|hook|fixture|stand)\b/i.test(lower);
+  const replicateIntent = /\b(copy|clone|replicate|duplicate|same as|make another|exact|scan)\b/i.test(lower);
+  const generateIntent = /\b(generate|ai|custom|unique|from scratch|don't search|do not search)\b/i.test(lower);
+  const searchIntent = /\b(find|search|look up|existing|thingiverse|printables|thangs)\b/i.test(lower);
+  const suppliedPrintable = sourceKind === "model" || sourceKind === "cad";
+  const mediaReference = sourceKind === "image" || sourceKind === "video";
+
+  let route: ProductionRoute;
+  let routeReason: string;
+
+  if (suppliedPrintable) {
+    route = "direct_print_package";
+    routeReason = "A printable/CAD artifact was supplied, so MICBot should review and package it before approval.";
+  } else if (!hasPrintIntent && !mediaReference) {
+    route = "non_print_request";
+    routeReason = "No physical-object or print intent was detected.";
+  } else if (!objectQuery && !mediaReference) {
+    route = "needs_clarification";
+    routeReason = "The request does not identify a physical object clearly enough to route.";
+  } else if (includesAny(lower, mechanicalCadSignals) || (replicateIntent && includesAny(lower, ["part", "fit", "mount", "bracket", "case", "hole"]))) {
+    route = "cad_design";
+    routeReason = "The request appears mechanical or fit-critical, so MICBot should use a STEP-first CAD lane.";
+  } else if (generateIntent || replicateIntent || (mediaReference && !searchIntent && !includesAny(lower, commonPrintableObjects))) {
+    route = "mesh_generation";
+    routeReason = "The request appears custom, media-driven, or exact-replication oriented rather than a generic library search.";
+  } else if (searchIntent || includesAny(lower, commonPrintableObjects) || mediaReference) {
+    route = "search_existing";
+    routeReason = "The object appears common enough that existing model search should be tried before generation.";
+  } else {
+    route = "needs_clarification";
+    routeReason = "MICBot needs one more constraint before choosing search, CAD, or mesh generation.";
+  }
+
+  const plan = workflowFor(route, sourceKind, objectQuery, routeReason);
+  if (!input.record) {
+    return plan;
+  }
+
+  if (input.intakeRequestId && !showIntake(input.intakeRequestId)) {
+    throw new Error(`Intake request not found: ${input.intakeRequestId}`);
+  }
+  if (input.artifactId && !showArtifact(input.artifactId)) {
+    throw new Error(`Artifact not found: ${input.artifactId}`);
+  }
+
+  const result = getDb()
+    .prepare(
+      `INSERT INTO production_workflow_plans
+       (intake_request_id, artifact_id, source_kind, route, object_query, route_reason, workflow_json)
+       VALUES (@intakeRequestId, @artifactId, @sourceKind, @route, @objectQuery, @routeReason, @workflowJson)`
+    )
+    .run({
+      intakeRequestId: input.intakeRequestId ?? null,
+      artifactId: input.artifactId ?? null,
+      sourceKind,
+      route,
+      objectQuery,
+      routeReason,
+      workflowJson: JSON.stringify(plan)
+    });
+
+  return { ...plan, workflow_plan: showProductionWorkflowPlan(Number(result.lastInsertRowid))! };
+}
+
+export function showProductionWorkflowPlan(id: number): ProductionWorkflowPlanRow | undefined {
+  return getDb()
+    .prepare(
+      `SELECT id, created_at, updated_at, intake_request_id, artifact_id, source_kind, route, object_query,
+              route_reason, workflow_json, status
+       FROM production_workflow_plans
+       WHERE id = ?`
+    )
+    .get(id) as ProductionWorkflowPlanRow | undefined;
+}
+
+export function listProductionWorkflowPlans(intakeRequestId?: number): ProductionWorkflowPlanRow[] {
+  const sql = `SELECT id, created_at, updated_at, intake_request_id, artifact_id, source_kind, route, object_query,
+                      route_reason, workflow_json, status
+               FROM production_workflow_plans`;
+  if (intakeRequestId) {
+    return getDb().prepare(`${sql} WHERE intake_request_id = ? ORDER BY id`).all(intakeRequestId) as ProductionWorkflowPlanRow[];
+  }
+  return getDb().prepare(`${sql} ORDER BY id`).all() as ProductionWorkflowPlanRow[];
 }
 
 function contentTypeFor(type: ArtifactType): string {

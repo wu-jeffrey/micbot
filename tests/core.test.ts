@@ -683,6 +683,69 @@ describe("MICBot intake to print package workflow", () => {
     expect(shown.status).toBe("valid_enough");
   });
 
+  it("routes production 3D requests into search, CAD, mesh, and package lanes", () => {
+    const search = JSON.parse(
+      runCli(["plan-production-workflow", "--message", "I need a phone holder for my desk", "--source-kind", "text", "--json"])
+    ) as { route: string; next_steps: string[]; safety: { sends_to_printer: boolean } };
+    expect(search.route).toBe("search_existing");
+    expect(search.next_steps.join(" ")).toContain("Search model libraries");
+    expect(search.safety.sends_to_printer).toBe(false);
+
+    const cad = JSON.parse(
+      runCli([
+        "plan-production-workflow",
+        "--message",
+        "Make a bracket with two M4 holes and tight fit dimensions",
+        "--source-kind",
+        "image",
+        "--json"
+      ])
+    ) as { route: string; micbot_outputs: string[] };
+    expect(cad.route).toBe("cad_design");
+    expect(cad.micbot_outputs).toContain("STEP/source artifact");
+
+    const mesh = JSON.parse(
+      runCli(["plan-production-workflow", "--message", "Generate a custom figurine from this video", "--source-kind", "video", "--json"])
+    ) as { route: string; required_user_inputs: string[] };
+    expect(mesh.route).toBe("mesh_generation");
+    expect(mesh.required_user_inputs.join(" ")).toContain("max physical size");
+
+    const intake = JSON.parse(
+      runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print supplied STL.", "--json"])
+    ) as { id: number };
+    const artifact = JSON.parse(
+      runCli(["store-artifact", "--intake-request-id", String(intake.id), "--path", "tests/fixtures/test_part.stl", "--artifact-type", "stl", "--json"])
+    ) as { id: number };
+    const recorded = JSON.parse(
+      runCli([
+        "plan-production-workflow",
+        "--message",
+        "Please prep this STL for PETG",
+        "--source-kind",
+        "model",
+        "--intake-request-id",
+        String(intake.id),
+        "--artifact-id",
+        String(artifact.id),
+        "--record",
+        "--json"
+      ])
+    ) as { route: string; workflow_plan: { id: number; route: string; intake_request_id: number; artifact_id: number } };
+    expect(recorded.route).toBe("direct_print_package");
+    expect(recorded.workflow_plan).toMatchObject({
+      route: "direct_print_package",
+      intake_request_id: intake.id,
+      artifact_id: artifact.id
+    });
+
+    const listed = JSON.parse(runCli(["list-production-workflow-plans", "--intake-request-id", String(intake.id), "--json"])) as Array<{
+      id: number;
+      route: string;
+    }>;
+    expect(listed).toHaveLength(1);
+    expect(listed[0].id).toBe(recorded.workflow_plan.id);
+  });
+
   it("creates a print package with checklist, notes, and metadata, then updates status", () => {
     const intake = JSON.parse(
       runCli(["create-intake", "--source", "manual", "--surface", "openclaw_discord", "--channel", "intake", "--message", "Print STL.", "--json"])

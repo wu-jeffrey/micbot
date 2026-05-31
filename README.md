@@ -109,6 +109,19 @@ npm run cli -- request-bambu-auto-arrange --print-package-id 1 --attempt-ui --js
 
 This is still human-gated. The command records that Auto Arrange was requested; it does not approve or send a print.
 
+## Production 3D Workflow Planning
+
+MICBot has a claw3d-inspired routing gate for physical-object requests:
+
+```bash
+npm run cli -- plan-production-workflow \
+ --message "I need a phone holder for my desk" \
+ --source-kind text \
+ --json
+```
+
+Routes are `search_existing`, `cad_design`, `mesh_generation`, `direct_print_package`, `needs_clarification`, and `non_print_request`. Add `--record` to persist the plan in SQLite. See `docs/production_3d_workflow.md`.
+
 ## Tests
 
 ```bash
